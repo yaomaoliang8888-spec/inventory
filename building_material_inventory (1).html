@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>建筑材料库存系统 PRO</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;background:#eef1f5;margin:0;padding:20px}
+.container{max-width:1200px;margin:auto}
+.card{background:white;padding:20px;border-radius:10px;box-shadow:0 4px 10px rgba(0,0,0,0.08);margin-bottom:20px}
+h1{margin-top:0}
+input,select{padding:8px;margin:4px;border:1px solid #ccc;border-radius:6px}
+button{padding:8px 14px;border:none;border-radius:6px;background:#2b7cff;color:white;cursor:pointer}
+button.danger{background:#e74c3c}
+button.gray{background:#777}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{border-bottom:1px solid #eee;padding:10px;text-align:center}
+th{background:#fafafa}
+.low{background:#ffd6d6}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px}
+.stats{display:flex;gap:20px;flex-wrap:wrap}
+.stat{background:#fafafa;padding:12px 18px;border-radius:8px}
+.hidden{display:none}
+.gallery img{width:60px;height:60px;object-fit:cover;border-radius:6px;margin:2px;border:1px solid #ddd}
+.viewer{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:none;align-items:center;justify-content:center}
+.viewer img{max-width:90%;max-height:90%}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<h1>建筑材料库存管理系统 PRO</h1>
+
+<div class="card" id="loginBox">
+<h3>管理员登录</h3>
+<input id="user" placeholder="用户名" />
+<input id="pass" type="password" placeholder="密码" />
+<button onclick="login()">登录</button>
+</div>
+
+<div class="card hidden" id="addBox">
+<h3>添加 / 编辑材料</h3>
+<input id="name" placeholder="材料名称" />
+<input id="spec" placeholder="规格" />
+<input id="qty" type="number" placeholder="库存数量" />
+<input id="unit" placeholder="单位" />
+<select id="warehouse">
+<option value="主仓库">主仓库</option>
+<option value="一号仓">一号仓</option>
+<option value="二号仓">二号仓</option>
+</select>
+
+<br>
+<label>产品照片 (最多10张)</label>
+<input type="file" id="photos" multiple accept="image/*" />
+
+<br><br>
+<button onclick="saveMaterial()">保存</button>
+<button class="gray" onclick="cancelEdit()">取消</button>
+</div>
+
+<div class="card" id="statsBox">
+<h3>库存统计</h3>
+<div class="stats">
+<div class="stat">材料种类: <span id="totalItems"></span></div>
+<div class="stat">库存总数量: <span id="totalQty"></span></div>
+<div class="stat" id="lowStat">低库存: <span id="lowCount"></span></div>
+</div>
+</div>
+
+<div class="card">
+<h3>库存工具</h3>
+<div class="toolbar">
+<input id="search" placeholder="搜索材料" oninput="render()" />
+<button onclick="exportCSV()">导出Excel(CSV)</button>
+<input type="file" id="importFile" onchange="importCSV(event)" />
+</div>
+</div>
+
+<div class="card">
+<h3>材料列表</h3>
+<table>
+<thead>
+<tr>
+<th>材料</th>
+<th>规格</th>
+<th>仓库</th>
+<th>库存</th>
+<th>单位</th>
+<th>照片</th>
+<th id="actionHead">操作</th>
+</tr>
+</thead>
+<tbody id="table"></tbody>
+</table>
+</div>
+
+</div>
+
+<div class="viewer" id="viewer" onclick="viewer.style.display='none'">
+<img id="viewImg" />
+</div>
+
+<script>
+const ADMIN_USER="IEPRENG";
+const ADMIN_PASS="IEPRENG123";
+
+let admin=false;
+let editIndex=-1;
+let editPhotos=[];
+
+const params=new URLSearchParams(location.search);
+const clientMode=params.get("view")==="client";
+
+if(clientMode){
+loginBox.style.display="none";
+actionHead.style.display="none";
+lowStat.style.display="none";
+}
+
+let materials=JSON.parse(localStorage.getItem("materials")||"[]");
+
+function saveData(){
+localStorage.setItem("materials",JSON.stringify(materials));
+}
+
+function login(){
+if(user.value===ADMIN_USER && pass.value===ADMIN_PASS){
+admin=true;
+addBox.classList.remove("hidden");
+alert("管理员登录成功");
+render();
+}else{
+alert("账号或密码错误");
+}
+}
+
+function saveMaterial(){
+if(!admin)return;
+
+let files=[...photos.files];
+
+if(files.length>10){
+alert("最多上传10张照片");
+return;
+}
+
+let readers=files.map(f=>new Promise(res=>{
+let r=new FileReader();
+r.onload=e=>res(e.target.result);
+r.readAsDataURL(f);
+}));
+
+Promise.all(readers).then(imgs=>{
+
+let obj={
+name:name.value,
+spec:spec.value,
+warehouse:warehouse.value,
+qty:Number(qty.value),
+unit:unit.value,
+photos:imgs.length?imgs:editPhotos
+};
+
+if(editIndex>=0){
+materials[editIndex]=obj;
+editIndex=-1;
+}else{
+materials.push(obj);
+}
+
+clearInputs();
+saveData();
+render();
+});
+}
+
+function editMaterial(i){
+if(!admin)return;
+let m=materials[i];
+name.value=m.name;
+spec.value=m.spec;
+warehouse.value=m.warehouse;
+qty.value=m.qty;
+unit.value=m.unit;
+editPhotos=m.photos||[];
+editIndex=i;
+}
+
+function deleteMaterial(i){
+if(!admin)return;
+if(confirm("确定删除该材料?")){
+materials.splice(i,1);
+saveData();
+render();
+}
+}
+
+function cancelEdit(){
+editIndex=-1;
+clearInputs();
+}
+
+function clearInputs(){
+name.value="";
+spec.value="";
+qty.value="";
+unit.value="";
+photos.value="";
+}
+
+function showImg(src){
+viewImg.src=src;
+viewer.style.display="flex";
+}
+
+function render(){
+let html="";
+let total=0;
+let low=0;
+
+let keyword=search.value?.toLowerCase()||"";
+
+materials.forEach((m,i)=>{
+
+if(keyword && !m.name.toLowerCase().includes(keyword))return;
+
+let lowClass=(m.qty<20 && !clientMode)?"low":"";
+if(m.qty<20)low++;
+
+total+=Number(m.qty);
+
+let imgs="";
+if(m.photos){
+imgs='<div class="gallery">'+m.photos.map(p=>`<img src="${p}" onclick="showImg('${p}')">`).join('')+'</div>';
+}
+
+html+=`<tr class="${lowClass}">
+<td>${m.name}</td>
+<td>${m.spec}</td>
+<td>${m.warehouse}</td>
+<td>${m.qty}</td>
+<td>${m.unit}</td>
+<td>${imgs}</td>
+<td>
+${admin?`<button onclick="editMaterial(${i})">编辑</button>
+<button class="danger" onclick="deleteMaterial(${i})">删除</button>`:""}
+</td>
+</tr>`;
+});
+
+table.innerHTML=html;
+
+totalItems.innerText=materials.length;
+totalQty.innerText=total;
+lowCount.innerText=low;
+}
+
+function exportCSV(){
+let csv="材料,规格,仓库,库存,单位\n";
+materials.forEach(m=>{
+csv+=`${m.name},${m.spec},${m.warehouse},${m.qty},${m.unit}\n`;
+});
+
+let blob=new Blob([csv]);
+let a=document.createElement("a");
+a.href=URL.createObjectURL(blob);
+a.download="库存表.csv";
+a.click();
+}
+
+function importCSV(e){
+let file=e.target.files[0];
+if(!file)return;
+
+let reader=new FileReader();
+reader.onload=function(evt){
+let rows=evt.target.result.split("\n").slice(1);
+rows.forEach(r=>{
+let c=r.split(",");
+if(c.length>=5){
+materials.push({
+name:c[0],
+spec:c[1],
+warehouse:c[2],
+qty:Number(c[3]),
+unit:c[4],
+photos:[]
+});
+}
+});
+saveData();
+render();
+};
+reader.readAsText(file);
+}
+
+render();
+</script>
+
+</body>
+</html>
